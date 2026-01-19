@@ -1,0 +1,36 @@
+# Flutter
+frontend/build/
+frontend/.dart_tool/
+frontend/.idea/
+frontend/.vscode/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+
+# Node
+gateway/node_modules/
+gateway/.env
+
+# Python
+ai-engine/__pycache__/
+ai-engine/.venv/
+
+# Docker volumes (DO NOT COMMIT DATA)
+data/postgis/
+data/graph/
+data/vector/
+data/redis/
+
+# OSM files
+*.osm
+*.osm.pbf
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.env

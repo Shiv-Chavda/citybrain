@@ -1,0 +1,54 @@
+services:
+
+  postgis:
+    image: postgis/postgis:15-3.4
+    container_name: citybrain-postgis
+    environment:
+      POSTGRES_DB: citybrain
+      POSTGRES_USER: citybrain
+      POSTGRES_PASSWORD: citybrain
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./data/postgis:/var/lib/postgresql/data
+    restart: always
+
+  redis:
+    image: redis:7
+    container_name: citybrain-redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  neo4j:
+    image: neo4j:5
+    container_name: citybrain-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/password
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - ./data/graph:/data
+    restart: always
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: citybrain-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./data/vector:/qdrant/storage
+    restart: always
+
+  osm2pgsql:
+    image: iboates/osm2pgsql
+    container_name: citybrain-osm2pgsql
+    depends_on:
+      - postgis
+    volumes:
+      - ./data/postgis:/data
+    entrypoint: ["sleep", "infinity"]
+
+
+
