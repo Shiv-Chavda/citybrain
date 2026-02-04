@@ -1,0 +1,560 @@
+import json
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
+from neo4j import GraphDatabase
+import psycopg2
+
+from typing import List, Optional, Literal
+from pydantic import BaseModel
+
+class GraphEntity(BaseModel):
+    id: str
+    type: Literal["Road", "Hospital", "Zone"]
+    hop: int
+    geometry: Optional[list] = None
+    location: Optional[list] = None
+
+class ImpactSubgraphResponse(BaseModel):
+    root: str
+    max_hops: int
+    subgraph: List[GraphEntity]
+
+class ZoneImpact(BaseModel):
+    zone_id: int
+    zone_name: str
+    affected_roads: int
+    total_roads: int
+    severity: float
+    geometry: list
+
+
+app = FastAPI(title="CityBrain Graph Engine")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # allow Flutter web
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+NEO4J_URI = "bolt://neo4j:7687"
+NEO4J_USER = "neo4j"
+NEO4J_PASS = "password"
+
+PG_HOST = "postgis"
+PG_PORT = 5432
+PG_DB = "citybrain"
+PG_USER = "citybrain"
+PG_PASS = "citybrain"
+
+driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+pg_conn = psycopg2.connect(
+    host=PG_HOST,
+    port=PG_PORT,
+    database=PG_DB,
+    user=PG_USER,
+    password=PG_PASS
+)
+
+def build_road_zone_links():
+    print("Linking Road -> Zone using PostGIS spatial join")
+
+    conn = psycopg2.connect(
+        host="postgis",
+        port=5432,
+        database="citybrain",
+        user="citybrain",
+        password="citybrain"
+    )
+    cur = conn.cursor()
+
+    cur.execute("""
+        DROP TABLE IF EXISTS road_zone_links;
+        CREATE TABLE road_zone_links (
+            road_osm_id BIGINT,
+            zone_osm_id BIGINT
+        );
+    """)
+
+    cur.execute("""
+        INSERT INTO road_zone_links (road_osm_id, zone_osm_id)
+        SELECT 
+            r.osm_id,
+            z.osm_id
+        FROM planet_osm_line r
+        JOIN planet_osm_polygon z
+          ON ST_Intersects(r.way, z.way)
+        WHERE z.admin_level IN ('5','6');
+    """)
+
+    cur.execute("SELECT COUNT(*) FROM road_zone_links;")
+    count = cur.fetchone()[0]
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    print(f"Found {count} Road-Zone spatial intersections")
+    return {"pairs": count}
+
+
+def rebuild_roads_from_postgis_to_neo4j():
+    print("Rebuilding Road nodes from PostGIS into Neo4j")
+    pg = pg_conn
+    cur = pg.cursor()
+
+    cur.execute("""
+        SELECT osm_id
+        FROM planet_osm_roads
+        WHERE osm_id IS NOT NULL
+    """)
+    roads = cur.fetchall()
+
+    with driver.session() as session:
+        session.run("MATCH (r:Road) DETACH DELETE r")
+
+        for (osm_id,) in roads:
+            session.run(
+                "MERGE (:Road {osm_id: $id})",
+                id=int(osm_id)
+            )
+
+    print(f"Inserted {len(roads)} Road nodes into Neo4j")
+
+
+def rebuild_zones_from_postgis():
+    print("Rebuilding Zone nodes from PostGIS")
+    pg = pg_conn
+    cur = pg.cursor()
+
+    cur.execute("""
+        SELECT
+            CAST(osm_id AS BIGINT) AS zone_id,
+            name,
+            ST_Area(way) AS area
+        FROM planet_osm_polygon
+        WHERE boundary = 'administrative'
+          AND admin_level IN ('6','7','8')
+          AND osm_id IS NOT NULL
+          AND name IS NOT NULL
+    """)
+
+    zones = cur.fetchall()
+
+    with driver.session() as session:
+        session.run("MATCH (z:Zone) DETACH DELETE z")
+
+        for zone_id, name, area in zones:
+            session.run(""" 
+                MERGE (z:Zone {zone_id: $zone_id})
+                SET z.name = $name,
+                    z.area = $area
+            """, zone_id=int(zone_id), name=name, area=float(area))
+
+    print(f"Inserted {len(zones)} Zones into Neo4j")
+
+
+
+def build_road_connectivity_from_postgis():
+    pg = pg_conn
+    cur = pg.cursor()
+    neo = driver.session(database="neo4j")
+
+    cur.execute("""
+        SELECT r1.osm_id, r2.osm_id
+        FROM planet_osm_roads r1
+        JOIN planet_osm_roads r2
+        ON ST_Touches(r1.way, r2.way)
+        WHERE r1.osm_id <> r2.osm_id
+        LIMIT 200000;
+    """)
+
+    for a, b in cur.fetchall():
+        neo.run("""
+            MATCH (r1:Road {osm_id: $a}), (r2:Road {osm_id: $b})
+            MERGE (r1)-[:CONNECTS_TO]->(r2)
+            MERGE (r2)-[:CONNECTS_TO]->(r1)
+        """, a=int(a), b=int(b))
+
+    neo.close()
+    cur.close()
+    pg.close()
+
+def corrected_push_road_zone_links_to_neo4j():
+    print("Pushing Road → Zone relationships into Neo4j")
+
+    pg = psycopg2.connect(
+        host="postgis",
+        port=5432,
+        database="citybrain",
+        user="citybrain",
+        password="citybrain"
+    )
+    cur = pg.cursor()
+
+    cur.execute("SELECT road_osm_id, zone_osm_id FROM road_zone_links;")
+    pairs = cur.fetchall()
+    print(f"Fetched {len(pairs)} Road–Zone pairs")
+    with driver.session() as session:
+        session.run("MATCH ()-[r:LOCATED_IN]->() DELETE r")
+
+        for road_id, zone_id in pairs:
+            session.run("""
+                MATCH (r:Road {osm_id: $road})
+                MATCH (z:Zone {zone_id: $zone})
+                MERGE (r)-[:LOCATED_IN]->(z)
+            """, road=int(road_id), zone=int(zone_id))
+
+    cur.close()
+    pg.close()
+    print("Road → Zone relationships successfully written to Neo4j")
+    return {"status": "Neo4j updated", "links": len(pairs)}
+
+
+def push_road_zone_links_to_neo4j():
+    print("Pushing Road → Zone relationships into Neo4j")
+
+    pg = psycopg2.connect(
+        host="postgis",
+        port=5432,
+        database="citybrain",
+        user="citybrain",
+        password="citybrain"
+    )
+    cur = pg.cursor()
+
+    cur.execute("SELECT road_osm_id, zone_osm_id FROM road_zone_links;")
+    pairs = cur.fetchall()
+    print(f"Fetched {len(pairs)} Road–Zone pairs")
+
+    with driver.session() as session:
+        session.run("MATCH ()-[r:LOCATED_IN]->() DELETE r")
+
+        for road_id, zone_id in pairs:
+            session.run("""
+                MATCH (r:Road {osm_id: $road})
+                MATCH (z:Zone {id: $zone})
+                MERGE (r)-[:LOCATED_IN]->(z)
+            """, road=str(road_id), zone=str(zone_id))
+
+    cur.close()
+    pg.close()
+    driver.close()
+
+    print("Road → Zone relationships successfully written to Neo4j")
+    return {"status": "Neo4j updated", "links": len(pairs)}
+
+
+
+
+
+@app.post("/build/roads")
+def build_roads():
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT osm_id, name, highway, ST_Length(way::geography)
+        FROM planet_osm_roads
+        WHERE highway IS NOT NULL;
+    """)
+    roads = cur.fetchall()
+
+    with driver.session(database="neo4j") as session:
+        for r in roads:
+            session.run("""
+                MERGE (road:Road {id: $id})
+                SET road.name = $name,
+                    road.type = $type,
+                    road.length = $length
+                MERGE (city:City {id: "ahmedabad"})
+                MERGE (road)-[:LOCATED_IN]->(city)
+            """, id=str(r[0]), name=r[1], type=r[2], length=float(r[3]))
+
+    return {"status": "Road nodes created", "count": len(roads)}
+
+@app.post("/build/road-connections")
+def connect_roads():
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT r1.osm_id, r2.osm_id
+        FROM planet_osm_roads r1
+        JOIN planet_osm_roads r2
+        ON ST_Touches(r1.way, r2.way)
+        WHERE r1.osm_id <> r2.osm_id;
+    """)
+    pairs = cur.fetchall()
+
+    with driver.session(database="neo4j") as session:
+        for a, b in pairs:
+            session.run("""
+                MATCH (r1:Road {id: $a}), (r2:Road {id: $b})
+                MERGE (r1)-[:CONNECTS_TO]->(r2)
+            """, a=str(a), b=str(b))
+
+    return {"status": "Road connectivity created", "edges": len(pairs)}
+
+@app.post("/build/zones")
+def build_zones():
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT osm_id, name, ST_Area(way::geography)
+        FROM planet_osm_polygon
+        WHERE boundary = 'administrative';
+    """)
+    zones = cur.fetchall()
+
+    with driver.session(database="neo4j") as session:
+        for z in zones:
+            session.run("""
+                MERGE (zone:Zone {id: $id})
+                SET zone.name = $name,
+                    zone.area = $area
+                MERGE (city:City {id: "ahmedabad"})
+                MERGE (zone)-[:PART_OF]->(city)
+            """, id=str(z[0]), name=z[1], area=float(z[2]))
+
+    return {"status": "Zones created", "count": len(zones)}
+
+
+@app.post("/link_roads_to_zones")
+def link_roads_to_zones():
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT r.osm_id, z.osm_id
+        FROM planet_osm_roads r, planet_osm_polygon z
+        WHERE z.boundary = 'administrative'
+        AND ST_Intersects(r.way, z.way);
+    """)
+    pairs = cur.fetchall()
+
+    with driver.session(database="neo4j") as session:
+        for r, z in pairs:
+            session.run("""
+                MATCH (road:Road {id: $rid}), (zone:Zone {id: $zid})
+                MERGE (road)-[:LOCATED_IN]->(zone)
+            """, rid=str(r), zid=str(z))
+
+    return {"status": "Road-Zone links created", "edges": len(pairs)}
+
+
+@app.post("/build_hospitals")
+def build_hospitals():
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT osm_id, name, way
+        FROM planet_osm_point
+        WHERE amenity = 'hospital';
+    """)
+    hospitals = cur.fetchall()
+
+    with driver.session(database="neo4j") as session:
+        for h in hospitals:
+            session.run("""
+                MERGE (hos:Hospital {id: $id})
+                SET hos.name = $name
+                MERGE (city:City {id: "ahmedabad"})
+                MERGE (hos)-[:LOCATED_IN]->(city)
+            """, id=str(h[0]), name=h[1])
+
+    return {"status": "Hospitals created", "count": len(hospitals)}
+
+@app.get("/impact/road/{road_id}")
+def road_impact(road_id: str, hops: int = 2):
+    with driver.session(database="neo4j") as session:
+        result = session.run("""
+            MATCH (r:Road {id: $rid})
+            CALL apoc.path.subgraphAll(r, {maxLevel: $hops})
+            YIELD nodes, relationships
+            RETURN nodes, relationships
+        """, rid=road_id, hops=hops)
+
+        record = result.single()
+        if not record:
+            return {"error": "Road not found"}
+
+        nodes = [dict(n) for n in record["nodes"]]
+        rels = [dict(r) for r in record["relationships"]]
+
+        return {
+            "road": road_id,
+            "hops": hops,
+            "affected_nodes": nodes,
+            "affected_edges": rels
+        }
+    
+@app.get("/api/impact/semantic/{road_id}", response_model=ImpactSubgraphResponse)
+def semantic_impact(road_id: int, hops: int = 3):
+    with driver.session(database="neo4j") as neo:
+        query = """
+        MATCH (r:Road {osm_id: $road})
+        CALL apoc.path.spanningTree(r, {
+        relationshipFilter: "<CONNECTS_TO|CONNECTS_TO",
+        minLevel: 0,
+        maxLevel: $maxHops,
+        bfs: true
+        })
+        YIELD path
+        WITH last(nodes(path)) AS node, length(path) AS hop
+        RETURN node, hop
+"""
+
+
+
+
+        records = neo.run(query, road=road_id, maxHops=hops)
+
+        pg = psycopg2.connect(
+            host="postgis",
+            port=5432,
+            database="citybrain",
+            user="citybrain",
+            password="citybrain"
+        )
+        pgcur = pg.cursor()
+
+        result = []
+
+        for record in records:
+            node = record["node"]
+            hop = record["hop"]
+
+            if "Road" in node.labels:
+                pgcur.execute(
+                    "SELECT ST_AsGeoJSON(way) FROM planet_osm_roads WHERE osm_id=%s",
+                    (int(node["osm_id"]),)
+                )
+                geom = pgcur.fetchone()
+                coords = json.loads(geom[0])["coordinates"] if geom else None
+
+                result.append(GraphEntity(
+                    id=str(node["osm_id"]),
+                    type="Road",
+                    hop=hop,
+                    geometry=coords
+                ))
+
+            elif "Hospital" in node.labels:
+                pgcur.execute(
+                    "SELECT ST_X(geom), ST_Y(geom) FROM hospitals WHERE id=%s",
+                    (node["id"],)
+                )
+                pt = pgcur.fetchone()
+
+                result.append(GraphEntity(
+                    id=str(node["id"]),
+                    type="Hospital",
+                    hop=hop,
+                    location=[pt[1], pt[0]] if pt else None
+                ))
+
+            elif "Zone" in node.labels:
+                pgcur.execute(
+                    "SELECT ST_AsGeoJSON(geom) FROM zones WHERE id=%s",
+                    (node["id"],)
+                )
+                poly = pgcur.fetchone()
+                poly_coords = json.loads(poly[0])["coordinates"] if poly else None
+
+                result.append(GraphEntity(
+                    id=str(node["id"]),
+                    type="Zone",
+                    hop=hop,
+                    geometry=poly_coords
+                ))
+
+        pgcur.close()
+        pg.close()
+
+        return ImpactSubgraphResponse(
+            root=str(road_id),
+            max_hops=hops,
+            subgraph=result
+        )
+    
+@app.get("/api/impact/zones/{road_id}")
+def zone_impact(road_id: int, hops: int = 3):
+    with driver.session(database="neo4j") as neo:
+        records = list(neo.run("""
+        MATCH (root:Road {osm_id: $road})
+        CALL apoc.path.spanningTree(
+          root,
+          {
+            relationshipFilter: "CONNECTS_TO",
+            minLevel: 0,
+            maxLevel: $hops,
+            bfs: true
+          }
+        )
+        YIELD path
+        WITH last(nodes(path)) AS r
+        MATCH (r)-[:LOCATED_IN]->(z:Zone)
+        WITH z, count(DISTINCT r) AS affected_roads
+
+        MATCH (z)<-[:LOCATED_IN]-(all:Road)
+        WITH
+          z.zone_id AS zone_id,
+          z.name AS zone_name,
+          affected_roads,
+          count(DISTINCT all) AS total_roads
+
+        RETURN
+          zone_id,
+          zone_name,
+          affected_roads,
+          total_roads,
+          round(toFloat(affected_roads) / total_roads, 3) AS severity
+        ORDER BY severity DESC
+        """, road=road_id, hops=hops))
+
+    pg = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        database=PG_DB,
+        user=PG_USER,
+        password=PG_PASS
+    )
+    cur = pg.cursor()
+
+    zones = []
+
+    for r in records:
+        cur.execute("""
+            SELECT ST_AsGeoJSON(way)
+            FROM planet_osm_polygon
+            WHERE name = %s
+              AND boundary = 'administrative'
+            LIMIT 1
+        """, (r["zone_name"],))
+
+        geom = cur.fetchone()
+        if not geom:
+            continue
+
+        zones.append({
+            "zone_id": r["zone_id"],
+            "zone_name": r["zone_name"],
+            "affected_roads": r["affected_roads"],
+            "total_roads": r["total_roads"],
+            "severity": float(r["severity"]),
+            "geometry": json.loads(geom[0])["coordinates"]
+        })
+
+    cur.close()
+    pg.close()
+
+    return {
+        "road_id": road_id,
+        "hops": hops,
+        "zones": zones
+    }
+
+
+
+
+
+if __name__ == "__main__":
+    print("Rebuilding road connectivity from PostGIS...")
+    build_road_zone_links()
+    build_road_connectivity_from_postgis()
+    print("Done.")

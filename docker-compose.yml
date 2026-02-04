@@ -17,7 +17,7 @@ services:
     image: redis:7
     container_name: citybrain-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     restart: always
 
   neo4j:
@@ -25,12 +25,15 @@ services:
     container_name: citybrain-neo4j
     environment:
       NEO4J_AUTH: neo4j/password
+      NEO4JLABS_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
     ports:
       - "7474:7474"
       - "7687:7687"
     volumes:
       - ./data/graph:/data
     restart: always
+
 
   qdrant:
     image: qdrant/qdrant
@@ -49,6 +52,17 @@ services:
     volumes:
       - ./data/postgis:/data
     entrypoint: ["sleep", "infinity"]
+
+  graph-engine:
+    build: ./ai-engine
+    container_name: citybrain-graph-engine
+    depends_on:
+      - postgis
+      - neo4j
+    ports:
+      - "8001:8001"
+    restart: always
+
 
 
 
