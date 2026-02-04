@@ -38,6 +38,10 @@ class _CityMapPageState extends State<CityMapPage> {
   bool showZones = true;
   List<dynamic> hospitalImpacts = [];
   bool showHospitals = true;
+  List<dynamic> topHospitals = [];
+  Map<int, List<LatLng>> rerouteGeometries = {};
+  int? selectedHospitalRoad; // reroute road id
+
 
   Color hopColor(int hop) {
     switch (hop) {
@@ -53,6 +57,28 @@ class _CityMapPageState extends State<CityMapPage> {
         return Colors.blueGrey;
     }
   }
+
+  Future<void> fetchRerouteRoad(int roadId) async {
+  if (rerouteGeometries.containsKey(roadId)) return;
+
+  final res = await http.get(Uri.parse(
+    'http://localhost:4000/api/roads/$roadId/geometry'
+  ));
+  final data = json.decode(res.body);
+
+  final coords = data["geometry"];
+  if (coords == null) return;
+
+  final points = coords
+      .map<LatLng>((c) => LatLng(c[1], c[0]))
+      .toList();
+
+  setState(() {
+    rerouteGeometries[roadId] = points;
+    selectedHospitalRoad = roadId;
+  });
+}
+
 
   Future<void> fetchNearestRoad(LatLng point) async {
     final res = await http.get(
@@ -94,6 +120,13 @@ class _CityMapPageState extends State<CityMapPage> {
     final hosData = json.decode(hosRes.body);
 
     hospitalImpacts = hosData['affected_hospitals'] ?? [];
+
+    final summaryRes = await http.get(
+      Uri.parse('http://localhost:4000/api/impact/summary/$roadId?hops=3'),
+    );
+    final summaryData = json.decode(summaryRes.body);
+
+    topHospitals = summaryData['top_hospitals'] ?? [];
 
     for (int i = 0; i <= 3; i++) {
       await Future.delayed(const Duration(milliseconds: 700));
@@ -247,7 +280,10 @@ class _CityMapPageState extends State<CityMapPage> {
                             point: LatLng(h["location"][0], h["location"][1]),
                             child: Tooltip(
                               message:
-                                  "${h["name"]}\nRisk: ${h["risk"]}\nHop: ${h["hop"]}",
+                                  "${h["name"]}\n"
+                                  "Risk: ${h["risk"]} (Hop ${h["hop"]})\n"
+                                  "Why: ${h["reason"]}\n"
+                                  "${h["reroute"] != null ? "Reroute: Road ${h["reroute"]["suggested_road_id"]}" : ""}",
                               child: Icon(
                                 Icons.local_hospital,
                                 color: hospitalColor(h["risk"]),
@@ -268,130 +304,192 @@ class _CityMapPageState extends State<CityMapPage> {
             child: Container(
               padding: const EdgeInsets.all(12),
               color: Colors.black87,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    "Impact Simulation",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text("Show Zone Heatmap"),
-                      Switch(
-                        value: showZones,
-                        onChanged: (v) {
-                          setState(() {
-                            showZones = v;
-                          });
-                        },
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Impact Simulation",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  const Divider(),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text("Show Hospitals"),
-                      Switch(
-                        value: showHospitals,
-                        onChanged: (v) {
-                          setState(() {
-                            showHospitals = v;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text(status, style: const TextStyle(color: Colors.orange)),
-                  const SizedBox(height: 10),
-                  const Divider(),
-                  const Text("Legend:"),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: const [
-                      Icon(Icons.remove, color: Colors.red),
-                      SizedBox(width: 6),
-                      Text("Hop 0 – Failure Origin"),
-                    ],
-                  ),
-                  Row(
-                    children: const [
-                      Icon(Icons.remove, color: Colors.orange),
-                      SizedBox(width: 6),
-                      Text("Hop 1 – Directly Affected"),
-                    ],
-                  ),
-                  Row(
-                    children: const [
-                      Icon(Icons.remove, color: Colors.yellow),
-                      SizedBox(width: 6),
-                      Text("Hop 2 – Secondary Spread"),
-                    ],
-                  ),
-                  Row(
-                    children: const [
-                      Icon(Icons.remove, color: Colors.green),
-                      SizedBox(width: 6),
-                      Text("Hop 3 – Tertiary Spread"),
-                    ],
-                  ),
-                  const Divider(),
-                  Text("Visible Hops: $currentHop / 3"),
-                  const Divider(),
-                  const Text("Zone Severity"),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: const [
-                      Icon(Icons.square, color: Colors.red),
-                      SizedBox(width: 6),
-                      Text("> 60% affected"),
-                    ],
-                  ),
-                  Row(
-                    children: const [
-                      Icon(Icons.square, color: Colors.orange),
-                      SizedBox(width: 6),
-                      Text("40–60% affected"),
-                    ],
-                  ),
-                  Row(
-                    children: const [
-                      Icon(Icons.square, color: Colors.yellow),
-                      SizedBox(width: 6),
-                      Text("20–40% affected"),
-                    ],
-                  ),
-                  Row(
-                    children: const [
-                      Icon(Icons.square, color: Colors.green),
-                      SizedBox(width: 6),
-                      Text("< 20% affected"),
-                    ],
-                  ),
-                  const Divider(),
-                  const Text(
-                    "Affected Hospitals",
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  ...hospitalImpacts.map(
-                    (h) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        "🏥 ${h["name"]} — ${h["risk"]} (Hop ${h["hop"]})",
-                        style: TextStyle(
-                          color: hospitalColor(h["risk"]),
-                          fontSize: 12,
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Show Zone Heatmap"),
+                        Switch(
+                          value: showZones,
+                          onChanged: (v) {
+                            setState(() {
+                              showZones = v;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Show Hospitals"),
+                        Switch(
+                          value: showHospitals,
+                          onChanged: (v) {
+                            setState(() {
+                              showHospitals = v;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(status, style: const TextStyle(color: Colors.orange)),
+                    const SizedBox(height: 10),
+                    const Divider(),
+                    const Text("Legend:"),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.red),
+                        SizedBox(width: 6),
+                        Text("Hop 0 – Failure Origin"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.orange),
+                        SizedBox(width: 6),
+                        Text("Hop 1 – Directly Affected"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.yellow),
+                        SizedBox(width: 6),
+                        Text("Hop 2 – Secondary Spread"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.green),
+                        SizedBox(width: 6),
+                        Text("Hop 3 – Tertiary Spread"),
+                      ],
+                    ),
+                    const Divider(),
+                    Text("Visible Hops: $currentHop / 3"),
+                    const Divider(),
+                    const Text("Zone Severity"),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: const [
+                        Icon(Icons.square, color: Colors.red),
+                        SizedBox(width: 6),
+                        Text("> 60% affected"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.square, color: Colors.orange),
+                        SizedBox(width: 6),
+                        Text("40–60% affected"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.square, color: Colors.yellow),
+                        SizedBox(width: 6),
+                        Text("20–40% affected"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.square, color: Colors.green),
+                        SizedBox(width: 6),
+                        Text("< 20% affected"),
+                      ],
+                    ),
+                    const Divider(),
+                    const Text(
+                      "Affected Hospitals",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    ...hospitalImpacts.map(
+                      (h) => Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: hospitalColor(h["risk"]).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "🏥 ${h["name"]}",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: hospitalColor(h["risk"]),
+                              ),
+                            ),
+                            Text("Risk: ${h["risk"]} (Hop ${h["hop"]})"),
+                            Text(
+                              "Why: ${h["reason"]}",
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            if (h["reroute"] != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  "🔁 Reroute via Road ${h["reroute"]["suggested_road_id"]}",
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.lightBlueAccent,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                ],
+
+                    const Divider(),
+                    const Text(
+                      "🚨 Priority Response (Top 5 Facilities)",
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    ...topHospitals.map(
+                      (h) => Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.redAccent),
+                        ),
+                        child: Text(
+                          "🏥 ${h["name"]}\n"
+                          "Hop: ${h["hop"]} | Priority Score: ${h["priority_score"]}\n"
+                          "Why: ${h["explanation"]}",
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

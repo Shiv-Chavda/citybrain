@@ -80,6 +80,23 @@ app.get("/api/impact/hospitals/:roadId", async (req, res) => {
   res.json(await r.json());
 });
 
+app.get("/api/impact/summary/:roadId", async (req, res) => {
+  const { roadId } = req.params;
+  const hops = req.query.hops || 3;
+
+  try {
+    const response = await fetch(
+      `http://localhost:8001/api/impact/summary/${roadId}?hops=${hops}`
+    );
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Impact summary service unavailable" });
+  }
+});
+
+
 
 app.get("/api/nearest-road", async (req, res) => {
   const { lat, lng } = req.query;

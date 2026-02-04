@@ -610,19 +610,48 @@ def hospital_impact(road_id: int, hops: int = 3):
 
             if hop == 0:
                 risk = "CRITICAL"
+                reason = "Hospital is directly connected to the failed road. Immediate access disruption expected."
             elif hop == 1:
                 risk = "HIGH"
+                reason = "Hospital access roads are directly connected to the failed road."
             elif hop == 2:
                 risk = "MEDIUM"
+                reason = "Hospital is reachable only via secondary roads affected by the failure."
             else:
                 risk = "LOW"
+                reason = "Hospital is indirectly affected with alternative routes still available."
+
+            # Find alternative safe road
+            cur.execute("""
+                SELECT osm_id
+                FROM planet_osm_roads
+                WHERE osm_id NOT IN %s
+                ORDER BY way <-> ST_SetSRID(ST_Point(%s, %s), 4326)
+                LIMIT 1
+            """, (
+                tuple(affected_roads.keys()),
+                lon,
+                lat
+            ))
+            alt = cur.fetchone()
+
+            if alt:
+                alt_road = alt[0]
+                reroute = {
+                    "suggested_road_id": alt_road,
+                    "reason": "Nearest unaffected road providing alternative access"
+                }
+            else:
+                reroute = None
 
             hospitals.append({
                 "hospital_id": hid,
                 "name": name,
                 "location": [lat, lon],
                 "hop": hop,
-                "risk": risk
+                "risk": risk,
+                "reason": reason,
+                "reroute": reroute
             })
 
     cur.close()
@@ -635,6 +664,84 @@ def hospital_impact(road_id: int, hops: int = 3):
         "hops": hops,
         "affected_hospitals": hospitals
     }
+
+@app.get("/api/impact/summary/{road_id}")
+def impact_summary(road_id: int, hops: int = 3):
+    # reuse hospital logic
+    with driver.session(database="neo4j") as neo:
+        records = neo.run("""
+        MATCH (root:Road {osm_id: $road})
+        CALL apoc.path.spanningTree(
+          root,
+          {
+            relationshipFilter: "CONNECTS_TO",
+            minLevel: 0,
+            maxLevel: $hops,
+            bfs: true
+          }
+        )
+        YIELD path
+        WITH last(nodes(path)) AS r, length(path) AS hop
+        RETURN r.osm_id AS road_id, hop
+        """, road=road_id, hops=hops)
+
+        affected_roads = {r["road_id"]: r["hop"] for r in records}
+
+    pg = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        database=PG_DB,
+        user=PG_USER,
+        password=PG_PASS
+    )
+    cur = pg.cursor()
+
+    cur.execute("""
+        SELECT
+          h.osm_id,
+          h.name,
+          r.osm_id AS road_id
+        FROM planet_osm_point h
+        JOIN LATERAL (
+          SELECT osm_id
+          FROM planet_osm_roads
+          ORDER BY h.way <-> planet_osm_roads.way
+          LIMIT 1
+        ) r ON true
+        WHERE h.amenity = 'hospital'
+    """)
+
+    hospitals = []
+
+    for hid, name, road in cur.fetchall():
+        if road in affected_roads:
+            hop = affected_roads[road]
+            score = max(0, (hops + 1) - hop)  # higher = more critical
+
+            if hop == 0:
+                explanation = "Directly dependent on the failed road"
+            elif hop == 1:
+                explanation = "Dependent on immediate connecting roads"
+            else:
+                explanation = "Indirect dependency via secondary routes"
+
+            hospitals.append({
+                "name": name,
+                "hop": hop,
+                "priority_score": score,
+                "explanation": explanation
+            })
+
+    cur.close()
+    pg.close()
+
+    hospitals.sort(key=lambda x: (-x["priority_score"], x["hop"]))
+
+    return {
+        "road_id": road_id,
+        "top_hospitals": hospitals[:5]
+    }
+
 
 
 
