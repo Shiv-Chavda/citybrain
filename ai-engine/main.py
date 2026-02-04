@@ -550,6 +550,91 @@ def zone_impact(road_id: int, hops: int = 3):
     }
 
 
+@app.get("/api/impact/hospitals/{road_id}")
+def hospital_impact(road_id: int, hops: int = 3):
+    # 1️⃣ Neo4j BFS
+    with driver.session(database="neo4j") as neo:
+        records = neo.run("""
+        MATCH (root:Road {osm_id: $road})
+        CALL apoc.path.spanningTree(
+          root,
+          {
+            relationshipFilter: "CONNECTS_TO",
+            minLevel: 0,
+            maxLevel: $hops,
+            bfs: true
+          }
+        )
+        YIELD path
+        WITH last(nodes(path)) AS r, length(path) AS hop
+        RETURN r.osm_id AS road_id, hop
+        """, road=road_id, hops=hops)
+
+        affected_roads = {
+            r["road_id"]: r["hop"]
+            for r in records
+        }
+
+    # 2️⃣ PostGIS hospital → nearest road
+    pg = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        database=PG_DB,
+        user=PG_USER,
+        password=PG_PASS
+    )
+    cur = pg.cursor()
+
+    cur.execute("""
+        SELECT
+          h.osm_id,
+          h.name,
+          ST_Y(h.way) AS lat,
+          ST_X(h.way) AS lon,
+          r.osm_id AS road_id
+        FROM planet_osm_point h
+        JOIN LATERAL (
+          SELECT osm_id
+          FROM planet_osm_roads
+          ORDER BY h.way <-> planet_osm_roads.way
+          LIMIT 1
+        ) r ON true
+        WHERE h.amenity = 'hospital'
+    """)
+
+    hospitals = []
+
+    for hid, name, lat, lon, road in cur.fetchall():
+        if road in affected_roads:
+            hop = affected_roads[road]
+
+            if hop == 0:
+                risk = "CRITICAL"
+            elif hop == 1:
+                risk = "HIGH"
+            elif hop == 2:
+                risk = "MEDIUM"
+            else:
+                risk = "LOW"
+
+            hospitals.append({
+                "hospital_id": hid,
+                "name": name,
+                "location": [lat, lon],
+                "hop": hop,
+                "risk": risk
+            })
+
+    cur.close()
+    pg.close()
+
+    hospitals.sort(key=lambda x: x["hop"])
+
+    return {
+        "road_id": road_id,
+        "hops": hops,
+        "affected_hospitals": hospitals
+    }
 
 
 

@@ -70,6 +70,17 @@ app.get("/api/impact/:roadId", async (req, res) => {
   }
 });
 
+app.get("/api/impact/hospitals/:roadId", async (req, res) => {
+  const { roadId } = req.params;
+  const hops = req.query.hops || 3;
+
+  const r = await fetch(
+    `http://localhost:8001/api/impact/hospitals/${roadId}?hops=${hops}`
+  );
+  res.json(await r.json());
+});
+
+
 app.get("/api/nearest-road", async (req, res) => {
   const { lat, lng } = req.query;
 

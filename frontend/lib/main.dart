@@ -36,6 +36,8 @@ class _CityMapPageState extends State<CityMapPage> {
   String status = "Click any road to simulate failure propagation";
   List<dynamic> zoneImpacts = [];
   bool showZones = true;
+  List<dynamic> hospitalImpacts = [];
+  bool showHospitals = true;
 
   Color hopColor(int hop) {
     switch (hop) {
@@ -72,7 +74,7 @@ class _CityMapPageState extends State<CityMapPage> {
     });
 
     final res = await http.get(
-      Uri.parse('http://localhost:8001/api/impact/semantic/$roadId?hops=6'),
+      Uri.parse('http://localhost:8001/api/impact/semantic/$roadId?hops=3'),
     );
     final data = json.decode(res.body);
 
@@ -80,11 +82,18 @@ class _CityMapPageState extends State<CityMapPage> {
 
     // Fetch zone-level impact
     final zoneRes = await http.get(
-      Uri.parse('http://localhost:4000/api/impact/zones/$roadId?hops=6'),
+      Uri.parse('http://localhost:4000/api/impact/zones/$roadId?hops=3'),
     );
     final zoneData = json.decode(zoneRes.body);
 
     zoneImpacts = zoneData['zones'] ?? [];
+
+    final hosRes = await http.get(
+      Uri.parse('http://localhost:4000/api/impact/hospitals/$roadId?hops=3'),
+    );
+    final hosData = json.decode(hosRes.body);
+
+    hospitalImpacts = hosData['affected_hospitals'] ?? [];
 
     for (int i = 0; i <= 3; i++) {
       await Future.delayed(const Duration(milliseconds: 700));
@@ -109,19 +118,20 @@ class _CityMapPageState extends State<CityMapPage> {
 
     return roads.map<Polyline>((node) {
       int hop = node["hop"];
-        List coords = node["geometry"];
-        double toDouble(dynamic v) {
-          if (v is num) return v.toDouble();
-          if (v is String) return double.tryParse(v) ?? 0.0;
-          if (v is List && v.isNotEmpty && v[0] is num) return (v[0] as num).toDouble();
-          return 0.0;
-        }
+      List coords = node["geometry"];
+      double toDouble(dynamic v) {
+        if (v is num) return v.toDouble();
+        if (v is String) return double.tryParse(v) ?? 0.0;
+        if (v is List && v.isNotEmpty && v[0] is num)
+          return (v[0] as num).toDouble();
+        return 0.0;
+      }
 
-        List<LatLng> points = coords.map<LatLng>((c) {
-          final lng = toDouble((c is List && c.length > 0) ? c[0] : c);
-          final lat = toDouble((c is List && c.length > 1) ? c[1] : c);
-          return LatLng(lat, lng);
-        }).toList();
+      List<LatLng> points = coords.map<LatLng>((c) {
+        final lng = toDouble((c is List && c.length > 0) ? c[0] : c);
+        final lat = toDouble((c is List && c.length > 1) ? c[1] : c);
+        return LatLng(lat, lng);
+      }).toList();
 
       return Polyline(
         points: points,
@@ -138,13 +148,28 @@ class _CityMapPageState extends State<CityMapPage> {
     return Colors.green.withOpacity(0.45);
   }
 
+  Color hospitalColor(String risk) {
+    switch (risk) {
+      case "CRITICAL":
+        return Colors.red;
+      case "HIGH":
+        return Colors.orange;
+      case "MEDIUM":
+        return Colors.yellow;
+      default:
+        return Colors.green;
+    }
+  }
+
   List<LatLng> parseZoneGeometry(List geometry) {
     // Locate the first array that looks like a ring of coordinate pairs
     List? findRing(dynamic node) {
       if (node is List) {
         if (node.isNotEmpty && node[0] is List) {
           final first = node[0];
-          if (first is List && first.isNotEmpty && (first[0] is num || first[0] is String)) {
+          if (first is List &&
+              first.isNotEmpty &&
+              (first[0] is num || first[0] is String)) {
             return node;
           }
         }
@@ -159,7 +184,8 @@ class _CityMapPageState extends State<CityMapPage> {
     double toDouble(dynamic v) {
       if (v is num) return v.toDouble();
       if (v is String) return double.tryParse(v) ?? 0.0;
-      if (v is List && v.isNotEmpty && v[0] is num) return (v[0] as num).toDouble();
+      if (v is List && v.isNotEmpty && v[0] is num)
+        return (v[0] as num).toDouble();
       return 0.0;
     }
 
@@ -212,6 +238,26 @@ class _CityMapPageState extends State<CityMapPage> {
                   urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 ),
                 PolygonLayer(polygons: buildZonePolygons()),
+                MarkerLayer(
+                  markers: showHospitals
+                      ? hospitalImpacts.map<Marker>((h) {
+                          return Marker(
+                            width: 30,
+                            height: 30,
+                            point: LatLng(h["location"][0], h["location"][1]),
+                            child: Tooltip(
+                              message:
+                                  "${h["name"]}\nRisk: ${h["risk"]}\nHop: ${h["hop"]}",
+                              child: Icon(
+                                Icons.local_hospital,
+                                color: hospitalColor(h["risk"]),
+                                size: 26,
+                              ),
+                            ),
+                          );
+                        }).toList()
+                      : [],
+                ),
 
                 PolylineLayer(polylines: buildPropagationLines()),
               ],
@@ -246,6 +292,21 @@ class _CityMapPageState extends State<CityMapPage> {
                   ),
                   const SizedBox(height: 10),
                   const Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Show Hospitals"),
+                      Switch(
+                        value: showHospitals,
+                        onChanged: (v) {
+                          setState(() {
+                            showHospitals = v;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
                   Text(status, style: const TextStyle(color: Colors.orange)),
                   const SizedBox(height: 10),
                   const Divider(),
@@ -311,6 +372,24 @@ class _CityMapPageState extends State<CityMapPage> {
                       SizedBox(width: 6),
                       Text("< 20% affected"),
                     ],
+                  ),
+                  const Divider(),
+                  const Text(
+                    "Affected Hospitals",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  ...hospitalImpacts.map(
+                    (h) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        "🏥 ${h["name"]} — ${h["risk"]} (Hop ${h["hop"]})",
+                        style: TextStyle(
+                          color: hospitalColor(h["risk"]),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
