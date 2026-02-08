@@ -1,4 +1,9 @@
 import json
+from rag.ingest import ingest_pdfs
+from rag.query import rag_query
+from spatial.geometry_fetcher import fetch_geometries
+from spatial.geojson import to_feature_collection
+from rag.schemas import RagAnswer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from neo4j import GraphDatabase
@@ -57,6 +62,104 @@ pg_conn = psycopg2.connect(
     user=PG_USER,
     password=PG_PASS
 )
+
+def build_junctions():
+    print("Building Junction nodes")
+
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT id, ST_Y(geom), ST_X(geom)
+        FROM road_junctions
+    """)
+    rows = cur.fetchall()
+
+    with driver.session() as session:
+        session.run("MATCH (j:Junction) DETACH DELETE j")
+
+        for jid, lat, lon in rows:
+            session.run("""
+                MERGE (j:Junction {id: $id})
+                SET j.lat = $lat,
+                    j.lon = $lon
+            """, id=jid, lat=float(lat), lon=float(lon))
+
+    cur.close()
+    print(f"Inserted {len(rows)} Junctions")
+
+def link_roads_to_junctions():
+    print("Linking Roads to Junctions")
+
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT
+          j.id,
+          r.osm_id
+        FROM road_junctions j
+        JOIN planet_osm_roads r
+          ON ST_DWithin(j.geom, r.way, 0.00005)
+    """)
+    rows = cur.fetchall()
+
+    with driver.session() as session:
+        session.run("MATCH ()-[r:MEETS_AT]->() DELETE r")
+
+        for jid, road_id in rows:
+            session.run("""
+                MATCH (j:Junction {id: $jid})
+                MATCH (r:Road {osm_id: $rid})
+                MERGE (r)-[:MEETS_AT]->(j)
+            """, jid=jid, rid=int(road_id))
+
+    cur.close()
+    print(f"Linked {len(rows)} road–junction pairs")
+
+def rebuild_real_construction_projects():
+    print("Rebuilding REAL ConstructionProject nodes from OSM")
+
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT id, name, project_type, risk_factor
+        FROM construction_projects
+    """)
+    rows = cur.fetchall()
+
+    with driver.session() as session:
+        session.run("MATCH (c:ConstructionProject) DETACH DELETE c")
+
+        for cid, name, ptype, risk in rows:
+            session.run("""
+                MERGE (c:ConstructionProject {id: $id})
+                SET c.name = $name,
+                    c.type = $type,
+                    c.risk_factor = $risk
+            """, id=cid, name=name, type=ptype, risk=float(risk))
+
+    cur.close()
+    print(f"Inserted {len(rows)} REAL construction projects")
+
+
+def link_real_construction_to_roads():
+    print("Linking REAL Construction Projects to Roads")
+
+    cur = pg_conn.cursor()
+    cur.execute("""
+        SELECT project_id, road_osm_id
+        FROM construction_road_links
+    """)
+    rows = cur.fetchall()
+
+    with driver.session() as session:
+        session.run("MATCH ()-[r:AFFECTS]->() DELETE r")
+
+        for pid, rid in rows:
+            session.run("""
+                MATCH (c:ConstructionProject {id: $pid})
+                MATCH (r:Road {osm_id: $rid})
+                MERGE (c)-[:AFFECTS {severity: c.risk_factor}]->(r)
+            """, pid=pid, rid=int(rid))
+
+    cur.close()
+    print(f"Linked {len(rows)} REAL construction-road pairs")
 
 def build_road_zone_links():
     print("Linking Road -> Zone using PostGIS spatial join")
@@ -247,8 +350,49 @@ def push_road_zone_links_to_neo4j():
     return {"status": "Neo4j updated", "links": len(pairs)}
 
 
+@app.get("/api/impact/junction/{junction_id}")
+def junction_impact(junction_id: int):
+    with driver.session() as neo:
+        res = neo.run("""
+        MATCH (j:Junction {id: $jid})<-[:MEETS_AT]-(r:Road)
+        RETURN r.osm_id AS road_id
+        """, jid=junction_id)
+
+        roads = [r["road_id"] for r in res]
+
+    return {
+        "junction_id": junction_id,
+        "connected_roads": roads,
+        "severity": len(roads)
+    }
+
+@app.get("/api/impact/construction/{road_id}")
+def construction_impact(road_id: int):
+    with driver.session() as neo:
+        res = neo.run("""
+        MATCH (c:ConstructionProject)-[a:AFFECTS]->(r:Road {osm_id: $rid})
+        RETURN
+          c.name AS project,
+          a.severity AS severity
+        """, rid=road_id)
+
+        projects = list(res)
+
+    return {
+        "road_id": road_id,
+        "projects": projects,
+        "risk_level": "HIGH" if projects else "LOW"
+    }
 
 
+@app.get("/map/highlight")
+def map_highlight(entity: str):
+    geoms = fetch_geometries(entity)
+    geojson = to_feature_collection(
+        geoms,
+        properties={"highlight": entity}
+    )
+    return geojson
 
 @app.post("/build/roads")
 def build_roads():
@@ -742,6 +886,13 @@ def impact_summary(road_id: int, hops: int = 3):
         "top_hospitals": hospitals[:5]
     }
 
+@app.post("/rag/ingest")
+def ingest_documents():
+    return ingest_pdfs("docs")
+
+@app.post("/rag/query", response_model=RagAnswer)
+def query_documents(question: str):
+    return rag_query(question)
 
 
 

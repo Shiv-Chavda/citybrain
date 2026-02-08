@@ -1,0 +1,23 @@
+# ---------- PyTorch (CPU only, stable) ----------
+torch==2.1.2+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# ---------- HuggingFace stack (PINNED) ----------
+transformers==4.38.2
+accelerate==0.27.2
+
+# ---------- Sentence embeddings ----------
+sentence-transformers==2.6.1
+
+# ---------- LangChain (compatible split packages) ----------
+langchain==0.1.16
+langchain-community==0.0.36
+langchain-text-splitters==0.0.1
+
+# ---------- Vector DB ----------
+qdrant-client==1.8.2
+
+# ---------- PDF + utilities ----------
+pypdf
+tiktoken
+google-genai>=0.3.0

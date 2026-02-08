@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:frontend/services/map_api.dart';
+import 'package:frontend/widgets/map_overlay.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 
@@ -9,21 +11,291 @@ void main() {
   runApp(const CityBrainApp());
 }
 
-class CityBrainApp extends StatelessWidget {
+class CityBrainApp extends StatefulWidget {
   const CityBrainApp({super.key});
 
+  @override
+  State<CityBrainApp> createState() => _CityBrainAppState();
+}
+
+class _CityBrainAppState extends State<CityBrainApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(),
-      home: const CityMapPage(),
+      home: const InitializationPage(),
+    );
+  }
+}
+
+class InitializationPage extends StatefulWidget {
+  const InitializationPage({super.key});
+
+  @override
+  State<InitializationPage> createState() => _InitializationPageState();
+}
+
+class _InitializationPageState extends State<InitializationPage>
+    with TickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+
+  String _statusMessage = "Initializing CityBrain...";
+  bool _hasError = false;
+  String _errorMessage = "";
+  double _progress = 0.0;
+  List<dynamic> _constructionProjects = [];
+  
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeIn),
+    );
+
+    _animationController.forward();
+    _initializeApp();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  
+
+  Future<void> _initializeApp() async {
+    try {
+      // Step 1: Check backend connectivity
+      await _updateProgress(0.2, "Checking backend connectivity...");
+      await _checkBackendConnectivity();
+
+      // Step 2: Load construction projects
+      await _updateProgress(0.5, "Loading construction projects...");
+      await _loadConstructionProjects();
+
+      // Step 3: Verify AI engine
+      await _updateProgress(0.8, "Verifying AI engine...");
+      await _checkAIEngine();
+
+      // Step 4: Initialization complete
+      await _updateProgress(1.0, "Initialization complete!");
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => CityMapPage(
+              preloadedConstructionProjects: _constructionProjects,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _hasError = true;
+        _errorMessage = e.toString();
+        _statusMessage = "Initialization failed";
+      });
+    }
+  }
+
+  Future<void> _updateProgress(double progress, String message) async {
+    setState(() {
+      _progress = progress;
+      _statusMessage = message;
+    });
+    await Future.delayed(const Duration(milliseconds: 300));
+  }
+
+  Future<void> _checkBackendConnectivity() async {
+    try {
+      final response = await http
+          .get(Uri.parse("http://localhost:4000/api/health"))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception("Gateway service not responding");
+      }
+    } catch (e) {
+      try {
+        // Fallback check - try to connect to any known endpoint
+        await http
+            .get(Uri.parse("http://localhost:4000/api/construction/geometry"))
+            .timeout(const Duration(seconds: 5));
+      } catch (e2) {
+        throw Exception("Cannot connect to backend services on localhost:4000");
+      }
+    }
+  }
+
+  Future<void> _loadConstructionProjects() async {
+    try {
+      final response = await http
+          .get(Uri.parse("http://localhost:4000/api/construction/geometry"))
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        throw Exception("Failed to load construction projects");
+      }
+
+      _constructionProjects = json.decode(response.body);
+    } catch (e) {
+      throw Exception("Error loading construction data: ${e.toString()}");
+    }
+  }
+
+  Future<void> _checkAIEngine() async {
+    try {
+      final response = await http
+          .get(Uri.parse("http://localhost:8001/api/health"))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception("AI Engine not responding");
+      }
+    } catch (e) {
+      // AI Engine check failed, but we can still continue
+      print("Warning: AI Engine may not be available: $e");
+    }
+  }
+
+  void _retryInitialization() {
+    setState(() {
+      _hasError = false;
+      _errorMessage = "";
+      _progress = 0.0;
+      _statusMessage = "Retrying initialization...";
+    });
+    _initializeApp();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D1117),
+      body: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Logo/Title
+              const Icon(Icons.location_city, size: 80, color: Colors.blue),
+              const SizedBox(height: 24),
+              const Text(
+                "CityBrain",
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "Smart City Infrastructure Management",
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 60),
+
+              // Progress indicator
+              if (!_hasError) ...[
+                SizedBox(
+                  width: 300,
+                  child: Column(
+                    children: [
+                      LinearProgressIndicator(
+                        value: _progress,
+                        backgroundColor: Colors.grey[800],
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.blue,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _statusMessage,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "${(_progress * 100).toInt()}%",
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // Error state
+              if (_hasError) ...[
+                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const SizedBox(height: 16),
+                Text(
+                  _statusMessage,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  margin: const EdgeInsets.symmetric(vertical: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    _errorMessage,
+                    style: const TextStyle(fontSize: 12, color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: _retryInitialization,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text("Retry"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
 class CityMapPage extends StatefulWidget {
-  const CityMapPage({super.key});
+  final List<dynamic>? preloadedConstructionProjects;
+
+  const CityMapPage({super.key, this.preloadedConstructionProjects});
 
   @override
   State<CityMapPage> createState() => _CityMapPageState();
@@ -41,7 +313,40 @@ class _CityMapPageState extends State<CityMapPage> {
   List<dynamic> topHospitals = [];
   Map<int, List<LatLng>> rerouteGeometries = {};
   int? selectedHospitalRoad; // reroute road id
+  List<dynamic> constructionProjects = [];
+  bool showConstruction = true;
+  List<dynamic> junctions = [];
+  bool showJunctions = true;
+  Map<String, dynamic>? highlightData;
 
+  @override
+  void initState() {
+    super.initState();
+      loadHighlight();
+    // Use preloaded construction projects if available
+    if (widget.preloadedConstructionProjects != null) {
+      constructionProjects = widget.preloadedConstructionProjects!;
+    } else {
+      // Fallback: fetch construction projects if not preloaded
+      fetchConstructionProjects();
+      fetchJunctions();
+    }
+  }
+
+  void loadHighlight() async {
+  final data = await MapApi.fetchHighlight("hospital");
+  setState(() {
+    highlightData = data;
+  });
+}
+
+  Color constructionColor(double risk) {
+    if (risk > 0.8) return Colors.red.withOpacity(0.6);
+    if (risk > 0.6) return Colors.orange.withOpacity(0.6);
+    return Colors.yellow.withOpacity(0.6);
+  }
+
+  Color junctionColor() => Colors.lightBlueAccent;
 
   Color hopColor(int hop) {
     switch (hop) {
@@ -58,27 +363,44 @@ class _CityMapPageState extends State<CityMapPage> {
     }
   }
 
+  Future<void> fetchJunctions() async {
+    final res = await http.get(
+      Uri.parse("http://localhost:4000/api/junctions"),
+    );
+
+    setState(() {
+      junctions = json.decode(res.body);
+    });
+  }
+
+  Future<void> fetchConstructionProjects() async {
+    final res = await http.get(
+      Uri.parse("http://localhost:4000/api/construction/geometry"),
+    );
+
+    setState(() {
+      constructionProjects = json.decode(res.body);
+    });
+  }
+
   Future<void> fetchRerouteRoad(int roadId) async {
-  if (rerouteGeometries.containsKey(roadId)) return;
+    if (rerouteGeometries.containsKey(roadId)) return;
 
-  final res = await http.get(Uri.parse(
-    'http://localhost:4000/api/roads/$roadId/geometry'
-  ));
-  final data = json.decode(res.body);
+    final res = await http.get(
+      Uri.parse('http://localhost:4000/api/roads/$roadId/geometry'),
+    );
+    final data = json.decode(res.body);
 
-  final coords = data["geometry"];
-  if (coords == null) return;
+    final coords = data["geometry"];
+    if (coords == null) return;
 
-  final points = coords
-      .map<LatLng>((c) => LatLng(c[1], c[0]))
-      .toList();
+    final points = coords.map<LatLng>((c) => LatLng(c[1], c[0])).toList();
 
-  setState(() {
-    rerouteGeometries[roadId] = points;
-    selectedHospitalRoad = roadId;
-  });
-}
-
+    setState(() {
+      rerouteGeometries[roadId] = points;
+      selectedHospitalRoad = roadId;
+    });
+  }
 
   Future<void> fetchNearestRoad(LatLng point) async {
     final res = await http.get(
@@ -128,6 +450,18 @@ class _CityMapPageState extends State<CityMapPage> {
 
     topHospitals = summaryData['top_hospitals'] ?? [];
 
+    final conRes = await http.get(
+      Uri.parse('http://localhost:4000/api/impact/construction/$roadId'),
+    );
+    final conData = json.decode(conRes.body);
+
+    if (conData["projects"] != null && conData["projects"].length > 0) {
+      setState(() {
+        status +=
+            "\n⚠ Construction impact detected (${conData["projects"].length} projects)";
+      });
+    }
+
     for (int i = 0; i <= 3; i++) {
       await Future.delayed(const Duration(milliseconds: 700));
       setState(() {
@@ -140,6 +474,51 @@ class _CityMapPageState extends State<CityMapPage> {
       animating = false;
     });
   }
+
+  List<Polyline> buildConstructionOverlays() {
+    if (!showConstruction) return [];
+
+    return constructionProjects.map<Polyline>((c) {
+      final geom = json.decode(c["geometry"]);
+      final coords = geom["coordinates"];
+
+      double toDouble(dynamic value) {
+        if (value is double) return value;
+        if (value is int) return value.toDouble();
+        if (value is String) return double.tryParse(value) ?? 0.0;
+        return 0.0;
+      }
+
+      List<LatLng> points = coords.map<LatLng>((p) {
+        return LatLng(toDouble(p[1]), toDouble(p[0]));
+      }).toList();
+
+      return Polyline(
+        points: points,
+        strokeWidth: 6,
+        color: constructionColor(toDouble(c["risk_factor"])),
+      );
+    }).toList();
+  }
+
+  // List<Marker> buildJunctionMarkers() {
+  //   if (!showJunctions) re// turn [];
+
+  //   return junctions.map<Marker>((j) {
+  //     return Marker(
+  //       width: 14,
+  //       height: 14,
+  //       point: LatLng(j["lat"], j["lon"]),
+  //       child: Container(
+  //         decoration: BoxDecoration(
+  //           shape: BoxShape.circle,
+  //           color: junctionColor(),
+  //           border: Border.all(color: Colors.black, width: 0.5),
+  //         ),
+  //       ),
+  //     );
+  //   }).toList();
+  // }
 
   List<Polyline> buildPropagationLines() {
     List<dynamic> roads = impactSubgraph
@@ -270,7 +649,12 @@ class _CityMapPageState extends State<CityMapPage> {
                 TileLayer(
                   urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 ),
+                if (highlightData != null)
+                  GeoJsonOverlay(geojson: highlightData!),
+
                 PolygonLayer(polygons: buildZonePolygons()),
+                PolylineLayer(polylines: buildConstructionOverlays()),
+                PolylineLayer(polylines: buildPropagationLines()),
                 MarkerLayer(
                   markers: showHospitals
                       ? hospitalImpacts.map<Marker>((h) {
@@ -295,7 +679,7 @@ class _CityMapPageState extends State<CityMapPage> {
                       : [],
                 ),
 
-                PolylineLayer(polylines: buildPropagationLines()),
+                // MarkerLayer(markers: buildJunctionMarkers()),
               ],
             ),
           ),
@@ -330,6 +714,38 @@ class _CityMapPageState extends State<CityMapPage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 10),
+                    const Divider(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Show Construction"),
+                        Switch(
+                          value: showConstruction,
+                          onChanged: (v) {
+                            setState(() {
+                              showConstruction = v;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    // const SizedBox(height: 10),
+                    // const Divider(),
+                    // Row(
+                    //   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    //   children: [
+                    //     const Text("Show Junctions"),
+                    //     Switch(
+                    //       value: showJunctions,
+                    //       onChanged: (v) {
+                    //         setState(() {
+                    //           showJunctions = v;
+                    //         });
+                    //       },
+                    //     ),
+                    //   ],
+                    // ),
                     const SizedBox(height: 10),
                     const Divider(),
                     Row(
@@ -411,6 +827,34 @@ class _CityMapPageState extends State<CityMapPage> {
                         Icon(Icons.square, color: Colors.green),
                         SizedBox(width: 6),
                         Text("< 20% affected"),
+                      ],
+                    ),
+                    const Divider(),
+                    const Text(
+                      "Construction Risk",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.red),
+                        SizedBox(width: 6),
+                        Text("High Risk Construction"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.orange),
+                        SizedBox(width: 6),
+                        Text("Medium Risk Construction"),
+                      ],
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.remove, color: Colors.yellow),
+                        SizedBox(width: 6),
+                        Text("Low Risk Construction"),
                       ],
                     ),
                     const Divider(),

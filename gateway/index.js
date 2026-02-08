@@ -116,6 +116,77 @@ app.get("/api/nearest-road", async (req, res) => {
   }
 });
 
+app.get("/api/impact/junction/:junctionId", async (req, res) => {
+  const { junctionId } = req.params;
+
+  try {
+    const r = await fetch(
+      `http://localhost:8001/api/impact/junction/${junctionId}`
+    );
+    res.json(await r.json());
+  } catch (err) {
+    res.status(500).json({ error: "Junction impact service unavailable" });
+  }
+});
+
+app.get("/api/impact/construction/:roadId", async (req, res) => {
+  const { roadId } = req.params;
+
+  try {
+    const r = await fetch(
+      `http://localhost:8001/api/impact/construction/${roadId}`
+    );
+    res.json(await r.json());
+  } catch (err) {
+    res.status(500).json({ error: "Construction impact service unavailable" });
+  }
+});
+
+app.get("/api/construction/geometry", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        id,
+        ST_AsGeoJSON(geom) AS geometry,
+        risk_factor
+      FROM construction_projects
+    `);
+
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/junctions", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        id,
+        ST_Y(geom) AS lat,
+        ST_X(geom) AS lon
+      FROM road_junctions
+      LIMIT 5000
+    `);
+
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/rag/query", async (req, res) => {
+  const { question } = req.body;
+
+  const r = await fetch("http://localhost:8001/rag/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question })
+  });
+
+  res.json(await r.json());
+});
+
 
 
 const PORT = 4000;
