@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:frontend/services/map_api.dart';
 import 'package:frontend/widgets/map_overlay.dart';
+import 'package:frontend/widgets/viaolation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 
@@ -46,7 +47,6 @@ class _InitializationPageState extends State<InitializationPage>
   String _errorMessage = "";
   double _progress = 0.0;
   List<dynamic> _constructionProjects = [];
-  
 
   @override
   void initState() {
@@ -68,8 +68,6 @@ class _InitializationPageState extends State<InitializationPage>
     _animationController.dispose();
     super.dispose();
   }
-
-  
 
   Future<void> _initializeApp() async {
     try {
@@ -307,22 +305,28 @@ class _CityMapPageState extends State<CityMapPage> {
   bool animating = false;
   String status = "Click any road to simulate failure propagation";
   List<dynamic> zoneImpacts = [];
-  bool showZones = true;
+  bool showZones = false;
   List<dynamic> hospitalImpacts = [];
-  bool showHospitals = true;
+  bool showHospitals = false;
   List<dynamic> topHospitals = [];
   Map<int, List<LatLng>> rerouteGeometries = {};
   int? selectedHospitalRoad; // reroute road id
   List<dynamic> constructionProjects = [];
-  bool showConstruction = true;
+  bool showConstruction = false;
   List<dynamic> junctions = [];
-  bool showJunctions = true;
+  bool showJunctions = false;
   Map<String, dynamic>? highlightData;
+  Map<String, dynamic>? bufferData;
+  bool showBuffers = false;
+  Map<String, dynamic>? violationData;
+  bool showViolations = false;
 
   @override
   void initState() {
     super.initState();
-      loadHighlight();
+    loadHighlight();
+    loadHospitalBuffers();
+    loadViolations();
     // Use preloaded construction projects if available
     if (widget.preloadedConstructionProjects != null) {
       constructionProjects = widget.preloadedConstructionProjects!;
@@ -333,12 +337,31 @@ class _CityMapPageState extends State<CityMapPage> {
     }
   }
 
+  void loadViolations() async {
+    final data = await MapApi.fetchConstructionHospitalViolations();
+    if (data == null) return;
+
+    setState(() {
+      violationData = data;
+    });
+  }
+
   void loadHighlight() async {
-  final data = await MapApi.fetchHighlight("hospital");
-  setState(() {
-    highlightData = data;
-  });
-}
+    final data = await MapApi.fetchHighlight("hospital");
+    if (data == null) return;
+
+    setState(() {
+      highlightData = data;
+    });
+  }
+
+  void loadHospitalBuffers() async {
+    final data = await MapApi.fetchHospitalBuffers();
+    // print("Loaded buffer data: $data");
+    setState(() {
+      bufferData = data;
+    });
+  }
 
   Color constructionColor(double risk) {
     if (risk > 0.8) return Colors.red.withOpacity(0.6);
@@ -646,15 +669,38 @@ class _CityMapPageState extends State<CityMapPage> {
                 },
               ),
               children: [
+                // 1️⃣ Base map
                 TileLayer(
                   urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 ),
-                if (highlightData != null)
-                  GeoJsonOverlay(geojson: highlightData!),
 
-                PolygonLayer(polygons: buildZonePolygons()),
-                PolylineLayer(polylines: buildConstructionOverlays()),
-                PolylineLayer(polylines: buildPropagationLines()),
+                // 2️⃣ Static reference layers (LOWEST overlays)
+                if (highlightData != null)
+                  GeoJsonOverlay(
+                    geojson: highlightData!,
+                  ), // hospital footprints
+
+                if (bufferData != null && showBuffers)
+                  GeoJsonOverlay(geojson: bufferData!), // hospital buffer zones
+
+                // if (violationData != null && showViolations)
+                //   ViolationOverlay(geojson: violationData!),
+
+                // 3️⃣ Dynamic analytical layers
+                PolygonLayer(
+                  polygons: buildZonePolygons(), // zone heatmap
+                ),
+
+                PolylineLayer(
+                  polylines: buildConstructionOverlays(), // construction risk
+                ),
+
+                // 4️⃣ Primary animated logic layer
+                PolylineLayer(
+                  polylines: buildPropagationLines(), // failure propagation
+                ),
+
+                // 5️⃣ Highest priority (UI interaction)
                 MarkerLayer(
                   markers: showHospitals
                       ? hospitalImpacts.map<Marker>((h) {
@@ -678,8 +724,6 @@ class _CityMapPageState extends State<CityMapPage> {
                         }).toList()
                       : [],
                 ),
-
-                // MarkerLayer(markers: buildJunctionMarkers()),
               ],
             ),
           ),
@@ -714,6 +758,38 @@ class _CityMapPageState extends State<CityMapPage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 10),
+                    const Divider(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Show Buffer Legend"),
+                        Switch(
+                          value: showBuffers,
+                          onChanged: (v) {
+                            setState(() {
+                              showBuffers = v;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    // const SizedBox(height: 10),
+                    // const Divider(),
+                    // Row(
+                    //   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    //   children: [
+                    //     const Text("Show Violations"),
+                    //     Switch(
+                    //       value: showViolations,
+                    //       onChanged: (v) {
+                    //         setState(() {
+                    //           showViolations = v;
+                    //         });
+                    //       },
+                    //     ),
+                    //   ],
+                    // ),
                     const SizedBox(height: 10),
                     const Divider(),
                     Row(
@@ -855,6 +931,83 @@ class _CityMapPageState extends State<CityMapPage> {
                         Icon(Icons.remove, color: Colors.yellow),
                         SizedBox(width: 6),
                         Text("Low Risk Construction"),
+                      ],
+                    ),
+                    const Divider(),
+                    const Text(
+                      "Hospital Buffer Zones",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.45),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: Colors.redAccent.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text("CRITICAL – Immediate impact zone"),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.35),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text("WARNING – Elevated impact area"),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.yellow.withOpacity(0.25),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: Colors.yellowAccent.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text("CAUTION – Peripheral buffer"),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: Colors.blueAccent.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text("DEFAULT – General buffer area"),
                       ],
                     ),
                     const Divider(),

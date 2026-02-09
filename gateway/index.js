@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
@@ -7,11 +8,11 @@ app.use(cors());
 app.use(express.json());
 
 const pool = new Pool({
-  host: "localhost",
-  port: 5433,
-  user: "citybrain",
-  password: "citybrain",
-  database: "citybrain",
+  host: process.env.POSTGRES_HOST || "localhost",
+  port: parseInt(process.env.POSTGRES_PORT) || 5433,
+  user: process.env.POSTGRES_USER || "citybrain",
+  password: process.env.POSTGRES_PASSWORD || "citybrain",
+  database: process.env.POSTGRES_DB || "citybrain",
 });
 
 // Health check
@@ -174,6 +175,121 @@ app.get("/api/junctions", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+app.get("/api/map/hospital-buffers", async (req, res) => {
+  try {
+    const r = await fetch("http://localhost:8001/map/hospital-buffers");
+    res.json(await r.json());
+  } catch (e) {
+    res.status(500).json({ error: "Hospital buffer service unavailable" });
+  }
+});
+
+app.get("/api/violations/construction-hospitals", async (req, res) => {
+  try {
+    const r = await fetch(
+      "http://localhost:8001/map/violations/construction-hospitals"
+    );
+    res.json(await r.json());
+  } catch (e) {
+    res.status(500).json({ error: "Violation detection service unavailable" });
+  }
+});
+
+
+
+app.get("/api/hospitals/buffers", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT jsonb_build_object(
+        'type', 'FeatureCollection',
+        'features', jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'geometry', ST_AsGeoJSON(geom)::jsonb,
+            'properties', jsonb_build_object(
+              'hospital_id', hospital_id,
+              'radius_m', radius_m
+            )
+          )
+        )
+      )
+      FROM hospital_buffers
+    `);
+
+    res.json(result.rows[0].jsonb_build_object);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ---------------------------------------------------
+// Hospital buffer zones (proxy to AI engine)
+// ---------------------------------------------------
+app.get("/api/map/buffer/hospitals", async (req, res) => {
+  const distance = req.query.distance || 100;
+
+  try {
+    const r = await fetch(
+      `http://localhost:8001/map/buffer/hospitals?distance=${distance}`
+    );
+
+    if (!r.ok) {
+      throw new Error("AI engine error");
+    }
+
+    const data = await r.json();
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Hospital buffer service unavailable",
+    });
+  }
+});
+
+app.get("/api/map/highlight/:entity", async (req, res) => {
+  const { entity } = req.params;
+
+  try {
+    const r = await fetch(
+      `http://localhost:8001/map/highlight?entity=${entity}`
+    );
+
+    if (!r.ok) {
+      return res.status(500).json({
+        error: "FastAPI highlight error",
+        status: r.status,
+      });
+    }
+
+    const data = await r.json();
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Map highlight service unavailable",
+    });
+  }
+});
+
+
+app.get("/api/map/highlight/hospitals", async (req, res) => {
+  try {
+    const r = await fetch(
+      "http://localhost:8001/map/highlight?entity=hospital"
+    );
+    const data = await r.json();
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Hospital highlight service unavailable"
+    });
+  }
+});
+
 
 app.post("/api/rag/query", async (req, res) => {
   const { question } = req.body;

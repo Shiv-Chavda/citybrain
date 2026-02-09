@@ -3,12 +3,16 @@ from rag.ingest import ingest_pdfs
 from rag.query import rag_query
 from spatial.geometry_fetcher import fetch_geometries
 from spatial.geojson import to_feature_collection
+from spatial.buffer_fetcher import fetch_hospital_buffers
+from spatial.geojson import to_feature_collection
+from spatial.violation_detector import detect_construction_hospital_violations
 from rag.schemas import RagAnswer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from neo4j import GraphDatabase
 import psycopg2
 
+import os
 from typing import List, Optional, Literal
 from pydantic import BaseModel
 
@@ -44,15 +48,15 @@ app.add_middleware(
 )
 
 
-NEO4J_URI = "bolt://neo4j:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASS = "password"
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASS = os.getenv("NEO4J_PASSWORD", os.getenv("NEO4J_PASS", "password"))
 
-PG_HOST = "postgis"
-PG_PORT = 5432
-PG_DB = "citybrain"
-PG_USER = "citybrain"
-PG_PASS = "citybrain"
+PG_HOST = os.getenv("POSTGRES_HOST", "postgis")
+PG_PORT = int(os.getenv("POSTGRES_PORT", 5432))
+PG_DB = os.getenv("POSTGRES_DB", "citybrain")
+PG_USER = os.getenv("POSTGRES_USER", "citybrain")
+PG_PASS = os.getenv("POSTGRES_PASSWORD", "citybrain")
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 pg_conn = psycopg2.connect(
@@ -62,6 +66,15 @@ pg_conn = psycopg2.connect(
     user=PG_USER,
     password=PG_PASS
 )
+
+def get_pg_conn():
+    return psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        database=PG_DB,
+        user=PG_USER,
+        password=PG_PASS
+    )
 
 def build_junctions():
     print("Building Junction nodes")
@@ -165,11 +178,11 @@ def build_road_zone_links():
     print("Linking Road -> Zone using PostGIS spatial join")
 
     conn = psycopg2.connect(
-        host="postgis",
-        port=5432,
-        database="citybrain",
-        user="citybrain",
-        password="citybrain"
+        host=PG_HOST,
+        port=PG_PORT,
+        database=PG_DB,
+        user=PG_USER,
+        password=PG_PASS
     )
     cur = conn.cursor()
 
@@ -288,13 +301,7 @@ def build_road_connectivity_from_postgis():
 def corrected_push_road_zone_links_to_neo4j():
     print("Pushing Road → Zone relationships into Neo4j")
 
-    pg = psycopg2.connect(
-        host="postgis",
-        port=5432,
-        database="citybrain",
-        user="citybrain",
-        password="citybrain"
-    )
+    pg = get_pg_conn()
     cur = pg.cursor()
 
     cur.execute("SELECT road_osm_id, zone_osm_id FROM road_zone_links;")
@@ -319,13 +326,7 @@ def corrected_push_road_zone_links_to_neo4j():
 def push_road_zone_links_to_neo4j():
     print("Pushing Road → Zone relationships into Neo4j")
 
-    pg = psycopg2.connect(
-        host="postgis",
-        port=5432,
-        database="citybrain",
-        user="citybrain",
-        password="citybrain"
-    )
+    pg = get_pg_conn()
     cur = pg.cursor()
 
     cur.execute("SELECT road_osm_id, zone_osm_id FROM road_zone_links;")
@@ -348,6 +349,51 @@ def push_road_zone_links_to_neo4j():
 
     print("Road → Zone relationships successfully written to Neo4j")
     return {"status": "Neo4j updated", "links": len(pairs)}
+
+@app.get("/map/violations/construction-hospitals")
+def construction_hospital_violations():
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": v["geometry"],
+                "properties": {
+                    "construction_id": v["construction_id"],
+                    "hospital": v["hospital"],
+                    "severity": v["severity"],
+                    "distance_m": v["distance_m"],
+                    "risk_factor": v["risk_factor"]
+                }
+            }
+            for v in detect_construction_hospital_violations()
+        ]
+    }
+
+@app.get("/map/hospital-buffers")
+def hospital_buffers_geojson():
+    conn = pg_conn
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT jsonb_build_object(
+          'type', 'FeatureCollection',
+          'features', jsonb_agg(
+            jsonb_build_object(
+              'type', 'Feature',
+              'geometry', ST_AsGeoJSON(geom)::jsonb,
+              'properties', jsonb_build_object(
+                'hospital', hospital_name,
+                'buffer_type', buffer_type,
+                'distance', distance_m
+              )
+            )
+          )
+        )
+        FROM hospital_buffers;
+    """)
+
+    return cur.fetchone()[0]
 
 
 @app.get("/api/impact/junction/{junction_id}")
@@ -384,15 +430,25 @@ def construction_impact(road_id: int):
         "risk_level": "HIGH" if projects else "LOW"
     }
 
+@app.get("/map/buffer/hospitals")
+def hospital_buffers(distance: int = 100):
+    buffers = fetch_hospital_buffers(distance)
+    return to_feature_collection(
+        buffers,
+        properties={
+            "type": "hospital_buffer",
+            "distance_m": distance
+        }
+    )
 
 @app.get("/map/highlight")
 def map_highlight(entity: str):
-    geoms = fetch_geometries(entity)
-    geojson = to_feature_collection(
-        geoms,
-        properties={"highlight": entity}
-    )
-    return geojson
+    features = fetch_geometries(entity)
+
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
 
 @app.post("/build/roads")
 def build_roads():
@@ -548,13 +604,7 @@ def semantic_impact(road_id: int, hops: int = 3):
 
         records = neo.run(query, road=road_id, maxHops=hops)
 
-        pg = psycopg2.connect(
-            host="postgis",
-            port=5432,
-            database="citybrain",
-            user="citybrain",
-            password="citybrain"
-        )
+        pg = get_pg_conn()
         pgcur = pg.cursor()
 
         result = []
