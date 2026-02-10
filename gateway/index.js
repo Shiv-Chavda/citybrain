@@ -13,10 +13,11 @@ const pool = new Pool({
   user: process.env.POSTGRES_USER || "citybrain",
   password: process.env.POSTGRES_PASSWORD || "citybrain",
   database: process.env.POSTGRES_DB || "citybrain",
+  ssl: { rejectUnauthorized: false }
 });
 
 // Health check
-app.get("/health", (req, res) => {
+app.get("/api/health", (req, res) => {
   res.json({ status: "CityBrain Gateway Running" });
 });
 
@@ -48,7 +49,7 @@ app.get("/api/impact/zones/:roadId", async (req, res) => {
 
   try {
     const response = await fetch(
-      `http://localhost:8001/api/impact/zones/${roadId}?hops=${hops}`
+      `https://citybrain.onrender.com/api/impact/zones/${roadId}?hops=${hops}`
     );
     const data = await response.json();
     res.json(data);
@@ -63,7 +64,7 @@ app.get("/api/impact/:roadId", async (req, res) => {
   const hops = req.query.hops || 2;
 
   try {
-    const response = await fetch(`http://localhost:8001/impact/road/${roadId}?hops=${hops}`);
+    const response = await fetch(`https://citybrain.onrender.com/impact/road/${roadId}?hops=${hops}`);
     const data = await response.json();
     res.json(data);
   } catch (err) {
@@ -76,7 +77,7 @@ app.get("/api/impact/hospitals/:roadId", async (req, res) => {
   const hops = req.query.hops || 3;
 
   const r = await fetch(
-    `http://localhost:8001/api/impact/hospitals/${roadId}?hops=${hops}`
+    `https://citybrain.onrender.com/api/impact/hospitals/${roadId}?hops=${hops}`
   );
   res.json(await r.json());
 });
@@ -87,7 +88,7 @@ app.get("/api/impact/summary/:roadId", async (req, res) => {
 
   try {
     const response = await fetch(
-      `http://localhost:8001/api/impact/summary/${roadId}?hops=${hops}`
+      `https://citybrain.onrender.com/api/impact/summary/${roadId}?hops=${hops}`
     );
     const data = await response.json();
     res.json(data);
@@ -122,7 +123,7 @@ app.get("/api/impact/junction/:junctionId", async (req, res) => {
 
   try {
     const r = await fetch(
-      `http://localhost:8001/api/impact/junction/${junctionId}`
+      `https://citybrain.onrender.com/api/impact/junction/${junctionId}`
     );
     res.json(await r.json());
   } catch (err) {
@@ -135,7 +136,7 @@ app.get("/api/impact/construction/:roadId", async (req, res) => {
 
   try {
     const r = await fetch(
-      `http://localhost:8001/api/impact/construction/${roadId}`
+      `https://citybrain.onrender.com/api/impact/construction/${roadId}`
     );
     res.json(await r.json());
   } catch (err) {
@@ -178,7 +179,7 @@ app.get("/api/junctions", async (req, res) => {
 
 app.get("/api/map/hospital-buffers", async (req, res) => {
   try {
-    const r = await fetch("http://localhost:8001/map/hospital-buffers");
+    const r = await fetch("https://citybrain.onrender.com/map/hospital-buffers");
     res.json(await r.json());
   } catch (e) {
     res.status(500).json({ error: "Hospital buffer service unavailable" });
@@ -188,7 +189,7 @@ app.get("/api/map/hospital-buffers", async (req, res) => {
 app.get("/api/violations/construction-hospitals", async (req, res) => {
   try {
     const r = await fetch(
-      "http://localhost:8001/map/violations/construction-hospitals"
+      "https://citybrain.onrender.com/map/violations/construction-hospitals"
     );
     res.json(await r.json());
   } catch (e) {
@@ -232,7 +233,7 @@ app.get("/api/map/buffer/hospitals", async (req, res) => {
 
   try {
     const r = await fetch(
-      `http://localhost:8001/map/buffer/hospitals?distance=${distance}`
+      `https://citybrain.onrender.com/map/buffer/hospitals?distance=${distance}`
     );
 
     if (!r.ok) {
@@ -254,7 +255,7 @@ app.get("/api/map/highlight/:entity", async (req, res) => {
 
   try {
     const r = await fetch(
-      `http://localhost:8001/map/highlight?entity=${entity}`
+      `https://citybrain.onrender.com/map/highlight?entity=${entity}`
     );
 
     if (!r.ok) {
@@ -278,7 +279,7 @@ app.get("/api/map/highlight/:entity", async (req, res) => {
 app.get("/api/map/highlight/hospitals", async (req, res) => {
   try {
     const r = await fetch(
-      "http://localhost:8001/map/highlight?entity=hospital"
+      "https://citybrain.onrender.com/map/highlight?entity=hospital"
     );
     const data = await r.json();
     res.json(data);
@@ -294,7 +295,7 @@ app.get("/api/map/highlight/hospitals", async (req, res) => {
 app.post("/api/rag/query", async (req, res) => {
   const { question } = req.body;
 
-  const r = await fetch("http://localhost:8001/rag/query", {
+  const r = await fetch("https://citybrain.onrender.com/rag/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question })

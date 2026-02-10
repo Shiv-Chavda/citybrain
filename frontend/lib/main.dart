@@ -153,7 +153,7 @@ class _InitializationPageState extends State<InitializationPage>
   Future<void> _checkAIEngine() async {
     try {
       final response = await http
-          .get(Uri.parse("http://localhost:8001/api/health"))
+          .get(Uri.parse("https://citybrain.onrender.com/api/health"))
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) {
@@ -445,7 +445,7 @@ class _CityMapPageState extends State<CityMapPage> {
     });
 
     final res = await http.get(
-      Uri.parse('http://localhost:8001/api/impact/semantic/$roadId?hops=3'),
+      Uri.parse('https://citybrain.onrender.com/api/impact/semantic/$roadId?hops=3'),
     );
     final data = json.decode(res.body);
 
