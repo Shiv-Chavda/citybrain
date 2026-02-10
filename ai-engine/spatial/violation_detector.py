@@ -1,18 +1,14 @@
 import json
+import os
 import psycopg2
-PG_HOST = "postgis"
-PG_PORT = 5432
-PG_DB = "citybrain"
-PG_USER = "citybrain"
-PG_PASS = "citybrain"
 
 def detect_construction_hospital_violations():
     conn = psycopg2.connect(
-    host=PG_HOST,
-    port=PG_PORT,
-    database=PG_DB,
-    user=PG_USER,
-    password=PG_PASS
+    host=os.getenv("POSTGRES_HOST", "postgis"),
+    port=os.getenv("POSTGRES_PORT", 5432),
+    database=os.getenv("POSTGRES_DB", "citybrain"),
+    user=os.getenv("POSTGRES_USER", "postgres"),
+    password=os.getenv("POSTGRES_PASSWORD", "postgres")
 )
     cur = conn.cursor()
 
