@@ -307,8 +307,8 @@ app.post("/api/rag/query", async (req, res) => {
 });
 
 
-
-const PORT = 4000;
-app.listen(PORT, () => {
-  console.log(`CityBrain Gateway running on http://localhost:${PORT}`);
+app.get("/", (req, res) => {
+  res.json({ message: "CityBrain Gateway running on Vercel 🚀" });
 });
+
+export default app;
