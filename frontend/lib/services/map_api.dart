@@ -1,10 +1,11 @@
 import 'dart:convert';
+import 'package:frontend/config/api_config.dart';
 import 'package:http/http.dart' as http;
 
 class MapApi {
   static Future<Map<String, dynamic>?> fetchHighlight(String entity) async {
   final res = await http.get(
-    Uri.parse("http://localhost:4000/api/map/highlight/$entity"),
+    Uri.parse("${ApiConfig.baseUrl}/api/map/highlight/$entity"),
   );
 
   if (res.statusCode != 200) {
@@ -18,7 +19,7 @@ class MapApi {
 
 static Future<Map<String, dynamic>?> fetchConstructionHospitalViolations() async {
     final res = await http.get(
-      Uri.parse("http://localhost:4000/api/violations/construction-hospitals"),
+      Uri.parse("${ApiConfig.baseUrl}/api/violations/construction-hospitals"),
     );
 
     if (res.statusCode != 200) return null;
@@ -29,7 +30,7 @@ static Future<Map<String, dynamic>?> fetchConstructionHospitalViolations() async
 
   static Future<Map<String, dynamic>> fetchHospitalBuffers() async {
   final res = await http.get(
-    Uri.parse("http://localhost:4000/api/map/hospital-buffers"),
+    Uri.parse("${ApiConfig.baseUrl}/api/map/hospital-buffers"),
   );
   return json.decode(res.body);
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:frontend/config/api_config.dart';
 import 'package:frontend/services/map_api.dart';
 import 'package:frontend/widgets/map_overlay.dart';
 import 'package:frontend/widgets/viaolation.dart';
@@ -116,7 +117,7 @@ class _InitializationPageState extends State<InitializationPage>
   Future<void> _checkBackendConnectivity() async {
     try {
       final response = await http
-          .get(Uri.parse("http://localhost:4000/api/health"))
+          .get(Uri.parse("${ApiConfig.baseUrl}/api/health"))
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) {
@@ -126,7 +127,7 @@ class _InitializationPageState extends State<InitializationPage>
       try {
         // Fallback check - try to connect to any known endpoint
         await http
-            .get(Uri.parse("http://localhost:4000/api/construction/geometry"))
+            .get(Uri.parse("${ApiConfig.baseUrl}/api/construction/geometry"))
             .timeout(const Duration(seconds: 5));
       } catch (e2) {
         throw Exception("Cannot connect to backend services on localhost:4000");
@@ -137,7 +138,7 @@ class _InitializationPageState extends State<InitializationPage>
   Future<void> _loadConstructionProjects() async {
     try {
       final response = await http
-          .get(Uri.parse("http://localhost:4000/api/construction/geometry"))
+          .get(Uri.parse("${ApiConfig.baseUrl}/api/construction/geometry"))
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
@@ -388,7 +389,7 @@ class _CityMapPageState extends State<CityMapPage> {
 
   Future<void> fetchJunctions() async {
     final res = await http.get(
-      Uri.parse("http://localhost:4000/api/junctions"),
+      Uri.parse("${ApiConfig.baseUrl}/api/junctions"),
     );
 
     setState(() {
@@ -398,7 +399,7 @@ class _CityMapPageState extends State<CityMapPage> {
 
   Future<void> fetchConstructionProjects() async {
     final res = await http.get(
-      Uri.parse("http://localhost:4000/api/construction/geometry"),
+      Uri.parse("${ApiConfig.baseUrl}/api/construction/geometry"),
     );
 
     setState(() {
@@ -410,7 +411,7 @@ class _CityMapPageState extends State<CityMapPage> {
     if (rerouteGeometries.containsKey(roadId)) return;
 
     final res = await http.get(
-      Uri.parse('http://localhost:4000/api/roads/$roadId/geometry'),
+      Uri.parse('${ApiConfig.baseUrl}/api/roads/$roadId/geometry'),
     );
     final data = json.decode(res.body);
 
@@ -428,7 +429,7 @@ class _CityMapPageState extends State<CityMapPage> {
   Future<void> fetchNearestRoad(LatLng point) async {
     final res = await http.get(
       Uri.parse(
-        'http://localhost:4000/api/nearest-road?lat=${point.latitude}&lng=${point.longitude}',
+        '${ApiConfig.baseUrl}/api/nearest-road?lat=${point.latitude}&lng=${point.longitude}',
       ),
     );
     final data = json.decode(res.body);
@@ -453,28 +454,28 @@ class _CityMapPageState extends State<CityMapPage> {
 
     // Fetch zone-level impact
     final zoneRes = await http.get(
-      Uri.parse('http://localhost:4000/api/impact/zones/$roadId?hops=3'),
+      Uri.parse('${ApiConfig.baseUrl}/api/impact/zones/$roadId?hops=3'),
     );
     final zoneData = json.decode(zoneRes.body);
 
     zoneImpacts = zoneData['zones'] ?? [];
 
     final hosRes = await http.get(
-      Uri.parse('http://localhost:4000/api/impact/hospitals/$roadId?hops=3'),
+      Uri.parse('${ApiConfig.baseUrl}/api/impact/hospitals/$roadId?hops=3'),
     );
     final hosData = json.decode(hosRes.body);
 
     hospitalImpacts = hosData['affected_hospitals'] ?? [];
 
     final summaryRes = await http.get(
-      Uri.parse('http://localhost:4000/api/impact/summary/$roadId?hops=3'),
+      Uri.parse('${ApiConfig.baseUrl}/api/impact/summary/$roadId?hops=3'),
     );
     final summaryData = json.decode(summaryRes.body);
 
     topHospitals = summaryData['top_hospitals'] ?? [];
 
     final conRes = await http.get(
-      Uri.parse('http://localhost:4000/api/impact/construction/$roadId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/impact/construction/$roadId'),
     );
     final conData = json.decode(conRes.body);
 
