@@ -21,3 +21,10 @@ qdrant-client==1.8.2
 pypdf
 tiktoken
 google-genai>=0.3.0
+
+fastapi
+uvicorn
+psycopg2-binary
+shapely
+geojson
+python-dotenv

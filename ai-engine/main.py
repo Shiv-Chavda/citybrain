@@ -940,6 +940,10 @@ def impact_summary(road_id: int, hops: int = 3):
 def ingest_documents():
     return ingest_pdfs("docs")
 
+@app.get("/api/health")
+def health():
+    return {"status": "AI Engine running"}
+
 @app.post("/rag/query", response_model=RagAnswer)
 def query_documents(question: str):
     return rag_query(question)
