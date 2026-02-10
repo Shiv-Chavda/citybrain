@@ -3,7 +3,9 @@ import express from "express";
 
 dotenv.config();
 import cors from "cors";
-import Pool from "pg";
+import pkg from "pg";
+const { Pool } = pkg;
+
 
 const app = express();
 app.use(cors());
