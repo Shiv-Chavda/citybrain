@@ -191,8 +191,8 @@ class _InitializationPageState extends State<InitializationPage>
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Image.network(
-                    'https://drive.google.com/uc?export=view&id=1MKtRQrxFxN6qR-qufOG7WcN8LJePUmE-',
+                  Image.asset(
+                    'assets/logo_v2.png',
                     width: 100,
                     height: 100,
                     fit: BoxFit.contain,
@@ -748,8 +748,8 @@ class _CityMapPageState extends State<CityMapPage> {
                   children: [
                     // Large logo showcase
                     Center(
-                      child: Image.network(
-                        'https://drive.google.com/uc?export=view&id=1hJtqcgJ4M27pUtgzjApVZhXA8Dx4dI_D',
+                      child: Image.asset(
+                        'assets/logo.png',
                         width: 500,
                         height: 500,
                         fit: BoxFit.contain,
