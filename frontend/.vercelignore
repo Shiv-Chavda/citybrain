@@ -1,0 +1,28 @@
+# Flutter/Dart build files
+.dart_tool/
+.packages
+.pub/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Platform-specific folders (not needed for web)
+android/
+ios/
+linux/
+macos/
+windows/
+
+# Test files
+test/
+
+# Other
+.metadata
+.gitignore
+README.md
+analysis_options.yaml
+pubspec.lock
