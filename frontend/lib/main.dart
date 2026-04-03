@@ -74,15 +74,15 @@ class _InitializationPageState extends State<InitializationPage>
     try {
       // Step 1: Check backend connectivity
       await _updateProgress(0.2, "Checking backend connectivity...");
-      await _checkBackendConnectivity();
+      // await _checkBackendConnectivity();
 
       // Step 2: Load construction projects
       await _updateProgress(0.5, "Loading construction projects...");
-      await _loadConstructionProjects();
+      // await _loadConstructionProjects();
 
       // Step 3: Verify AI engine
       await _updateProgress(0.8, "Verifying AI engine...");
-      await _checkAIEngine();
+      // await _checkAIEngine();
 
       // Step 4: Initialization complete
       await _updateProgress(1.0, "Initialization complete!");
@@ -188,16 +188,27 @@ class _InitializationPageState extends State<InitializationPage>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               // Logo/Title
-              const Icon(Icons.location_city, size: 80, color: Colors.blue),
-              const SizedBox(height: 24),
-              const Text(
-                "CityBrain",
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Image.asset(
+                    'assets/logo.png',
+                    width: 100,
+                    height: 100,
+                    fit: BoxFit.contain,
+                  ),
+                  const SizedBox(width: 20),
+                  const Text(
+                    "CityBrain",
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
+              const SizedBox(height: 24),
               const SizedBox(height: 16),
               const Text(
                 "Smart City Infrastructure Management",
@@ -388,9 +399,7 @@ class _CityMapPageState extends State<CityMapPage> {
   }
 
   Future<void> fetchJunctions() async {
-    final res = await http.get(
-      Uri.parse("${ApiConfig.baseUrl}/api/junctions"),
-    );
+    final res = await http.get(Uri.parse("${ApiConfig.baseUrl}/api/junctions"));
 
     setState(() {
       junctions = json.decode(res.body);
@@ -446,7 +455,9 @@ class _CityMapPageState extends State<CityMapPage> {
     });
 
     final res = await http.get(
-      Uri.parse('https://citybrain.onrender.com/api/impact/semantic/$roadId?hops=3'),
+      Uri.parse(
+        'https://citybrain.onrender.com/api/impact/semantic/$roadId?hops=3',
+      ),
     );
     final data = json.decode(res.body);
 
@@ -651,7 +662,6 @@ class _CityMapPageState extends State<CityMapPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("CityBrain – Failure Propagation")),
       body: Row(
         children: [
           Expanded(
@@ -683,7 +693,6 @@ class _CityMapPageState extends State<CityMapPage> {
 
                 if (bufferData != null && showBuffers)
                   GeoJsonOverlay(geojson: bufferData!), // hospital buffer zones
-
                 // if (violationData != null && showViolations)
                 //   ViolationOverlay(geojson: violationData!),
 
@@ -737,6 +746,26 @@ class _CityMapPageState extends State<CityMapPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Large logo showcase
+                    Center(
+                      child: Image.asset(
+                        'assets/logo.png',
+                        width: 500,
+                        height: 500,
+                        fit: BoxFit.contain,
+                      ),
+
+                      // const SizedBox(height: 8),
+                      // const Text(
+                      //   "CityBrain",
+                      //   style: TextStyle(
+                      //     fontSize: 28,
+                      //     fontWeight: FontWeight.bold,
+                      //     color: Colors.white,
+                      //   ),
+                      // ),
+                    ),
+                    const Divider(),
                     const Text(
                       "Impact Simulation",
                       style: TextStyle(
