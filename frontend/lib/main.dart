@@ -74,15 +74,15 @@ class _InitializationPageState extends State<InitializationPage>
     try {
       // Step 1: Check backend connectivity
       await _updateProgress(0.2, "Checking backend connectivity...");
-      // await _checkBackendConnectivity();
+      await _checkBackendConnectivity();
 
       // Step 2: Load construction projects
       await _updateProgress(0.5, "Loading construction projects...");
-      // await _loadConstructionProjects();
+      await _loadConstructionProjects();
 
       // Step 3: Verify AI engine
       await _updateProgress(0.8, "Verifying AI engine...");
-      // await _checkAIEngine();
+      await _checkAIEngine();
 
       // Step 4: Initialization complete
       await _updateProgress(1.0, "Initialization complete!");
